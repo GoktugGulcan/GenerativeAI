@@ -110,5 +110,5 @@ def redo():
     img_io = image_storage[session_id]['history'][image_storage[session_id]['current_step']]
     return send_file(img_io, mimetype='image/png')
     
-if __name__ == '__main__':
-    app.run(debug=True)
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)
