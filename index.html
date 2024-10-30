@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teknopalas Image Generator</title>
+    <style>
+        body { font-family: Arial, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background-color: #f4f4f9; }
+        .container { background-color: #fff; padding: 2em; border-radius: 8px; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2); max-width: 600px; width: 100%; text-align: center; }
+        h1 { color: #333; }
+        label { font-weight: bold; margin-top: 1em; display: block; }
+        input, button { width: 100%; padding: 0.5em; margin-top: 0.5em; border-radius: 4px; border: 1px solid #ccc; }
+        .color-picker, .actions { display: flex; justify-content: space-between; margin-top: 1em; }
+        .color-picker div, .actions div { width: 48%; }
+        #image-canvas { max-width: 100%; max-height: 400px; border-radius: 8px; border: 1px solid #ddd; margin-top: 1em; cursor: crosshair; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Teknopalas Image Generator</h1>
+
+        <!-- Image Generation Form -->
+        <form id="generate-form" action="/generate" method="post" enctype="multipart/form-data">
+            <label for="image">Resim Yükle:</label>
+            <input type="file" id="image" name="image" accept="image/*">
+
+            <label for="prompt">Promptu gir:</label>
+            <input type="text" id="prompt" name="prompt" placeholder="e.g., A cat and dog sitting together..." required>
+
+            <label for="strength">Benzerlik (0-1):</label>
+            <input type="number" id="strength" name="strength" step="0.1" min="0" max="1" value="0.75">
+
+            <button type="submit">Resmi Oluştur</button>
+        </form>
+
+        <!-- Color Change Controls -->
+        <div class="color-picker">
+            <div>
+                <label for="target_color">Hedef Renk:</label>
+                <input type="color" id="target_color" value="#ff0000">
+            </div>
+            <div>
+                <label for="replacement_color">Yeni Renk:</label>
+                <input type="color" id="replacement_color" value="#00ff00">
+            </div>
+        </div>
+
+        <!-- Undo/Redo and Confirm Buttons -->
+        <div class="actions">
+            <button type="button" onclick="applyStaging()">Aşamayı Onayla</button>
+            <button type="button" onclick="confirmChanges()">Değişiklikleri Onayla</button>
+            <button type="button" onclick="undo()">Geri AL</button>
+            <button type="button" onclick="redo()">İleri Al</button>
+        </div>
+
+        <!-- Download Button -->
+        <button id="download-button" style="display: none;" onclick="downloadImage()">İndir</button>
+
+        <!-- Image Canvas -->
+        <canvas id="image-canvas" style="display: none;"></canvas>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('image-canvas');
+        const ctx = canvas.getContext('2d');
+        let baseImage = null;
+        let stagingImage = null;
+        let imageHistory = [], currentStep = -1;
+
+        // Load image for editing on canvas
+        function loadImage(url) {
+            const img = new Image();
+            img.src = url;
+            img.onload = function () {
+                canvas.width = img.width;
+                canvas.height = img.height;
+                ctx.drawImage(img, 0, 0);
+                canvas.style.display = 'block';
+                document.getElementById('download-button').style.display = 'block';
+
+                baseImage = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                addHistory(baseImage);
+            };
+        }
+
+        // Image generation submission
+        document.getElementById('generate-form').onsubmit = function (e) {
+            e.preventDefault();
+            const formData = new FormData(this);
+            fetch('/generate', { method: 'POST', body: formData })
+                .then(response => response.blob())
+                .then(blob => {
+                    const url = URL.createObjectURL(blob);
+                    loadImage(url);
+                });
+        };
+
+        // Color change function for staging changes
+        function applyStaging() {
+            const targetColor = document.getElementById('target_color').value;
+            const replacementColor = document.getElementById('replacement_color').value;
+            stagingImage = changeColor(baseImage, targetColor, replacementColor);
+            ctx.putImageData(stagingImage, 0, 0);
+        }
+
+        // Confirm staging changes and apply them to the base image
+        function confirmChanges() {
+            if (stagingImage) {
+                baseImage = new ImageData(new Uint8ClampedArray(stagingImage.data), stagingImage.width, stagingImage.height);
+                addHistory(baseImage);
+                ctx.putImageData(baseImage, 0, 0);
+                stagingImage = null;  // Reset staging image after confirmation
+            }
+        }
+
+        // Change color on a temporary image
+        function changeColor(imgData, targetColor, replacementColor, tolerance = 40) {
+            const stagedData = new ImageData(new Uint8ClampedArray(imgData.data), imgData.width, imgData.height);
+            const [r1, g1, b1] = hexToRgb(targetColor);
+            const [r2, g2, b2] = hexToRgb(replacementColor);
+
+            for (let i = 0; i < stagedData.data.length; i += 4) {
+                const [r, g, b] = [stagedData.data[i], stagedData.data[i + 1], stagedData.data[i + 2]];
+
+                if (Math.abs(r - r1) <= tolerance && Math.abs(g - g1) <= tolerance && Math.abs(b - b1) <= tolerance) {
+                    [stagedData.data[i], stagedData.data[i + 1], stagedData.data[i + 2]] = [r2, g2, b2];
+                }
+            }
+
+            return stagedData;
+        }
+
+        // Undo/Redo with history management
+        function addHistory(imgData) {
+            imageHistory = imageHistory.slice(0, currentStep + 1);
+            imageHistory.push(new ImageData(new Uint8ClampedArray(imgData.data), imgData.width, imgData.height));
+            currentStep++;
+        }
+
+        function undo() {
+            if (currentStep > 0) {
+                currentStep--;
+                ctx.putImageData(imageHistory[currentStep], 0, 0);
+                baseImage = imageHistory[currentStep];
+            }
+        }
+
+        function redo() {
+            if (currentStep < imageHistory.length - 1) {
+                currentStep++;
+                ctx.putImageData(imageHistory[currentStep], 0, 0);
+                baseImage = imageHistory[currentStep];
+            }
+        }
+
+        // Utility function to convert hex color to RGB
+        function hexToRgb(hex) {
+            const bigint = parseInt(hex.slice(1), 16);
+            return [(bigint >> 16) & 255, (bigint >> 8) & 255, bigint & 255];
+        }
+
+        // Download the final image
+        function downloadImage() {
+            const link = document.createElement('a');
+            link.download = 'edited-image.png';
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+        }
+    </script>
+</body>
+</html>
