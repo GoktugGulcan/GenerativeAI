@@ -3,4 +3,4 @@ diffusers==0.31.0
 torch==2.4.0
 Pillow==10.4.0
 numpy==1.24.3
-opencv-python-headless==4.7.0
+opencv-python-headless>=4.5.5  
